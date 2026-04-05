@@ -172,11 +172,32 @@ function playCloseSound() {
   }
 }
 
+/**
+ * animateCardOut(card)
+ *
+ * Smoothly removes a mission card in two phases:
+ * 1. Fade out + slide right (GPU-accelerated, smooth)
+ * 2. After fade completes, collapse the height
+ * 3. After collapse, remove from DOM
+ */
+function animateCardOut(card) {
+  if (!card) return;
+  // Set explicit max-height so the collapse transition has a starting value
+  card.style.maxHeight = card.offsetHeight + 'px';
+  // Phase 1: fade + slide
+  card.classList.add('closing');
+  // Phase 2: collapse height after fade finishes
+  setTimeout(() => {
+    card.classList.add('collapsed');
+    // Phase 3: remove from DOM after collapse
+    setTimeout(() => card.remove(), 280);
+  }, 320);
+}
+
 function showToast(message) {
   const toast = document.getElementById('toast');
   document.getElementById('toastText').textContent = message;
   toast.classList.add('visible');
-  // Auto-hide after 2.5 seconds
   setTimeout(() => toast.classList.remove('visible'), 2500);
 }
 
@@ -332,14 +353,19 @@ function renderOpenTabsMissionCard(mission, missionIndex) {
     ${tabCount} tab${tabCount !== 1 ? 's' : ''} open
   </span>`;
 
+  // Check if any tabs in this mission are duplicates
+  const dupeMap = window._dupeUrlMap || {};
+  const missionHasDupes = tabs.some(t => dupeMap[t.url]);
+
   // Page chips — one per actual open tab (up to 5 shown, rest summarized)
   const visibleTabs = tabs.slice(0, 5);
   const extraCount  = tabs.length - visibleTabs.length;
   const pageChips = visibleTabs.map(tab => {
     const label   = tab.title || tab.url || '';
     const display = label.length > 45 ? label.slice(0, 45) + '…' : label;
-    // Each chip is clickable — clicking it switches to that specific tab
-    return `<span class="page-chip clickable" data-action="focus-tab" data-tab-url="${(tab.url || '').replace(/"/g, '&quot;')}" title="${label.replace(/"/g, '&quot;')}">${display}</span>`;
+    const dupeCount = dupeMap[tab.url];
+    const dupeTag = dupeCount ? ` <span style="color:var(--accent-amber);font-weight:600">(${dupeCount}x)</span>` : '';
+    return `<span class="page-chip clickable" data-action="focus-tab" data-tab-url="${(tab.url || '').replace(/"/g, '&quot;')}" title="${label.replace(/"/g, '&quot;')}">${display}${dupeTag}</span>`;
   }).join('') + (extraCount > 0 ? `<span class="page-chip">+${extraCount} more</span>` : '');
 
   // Use a stable ID based on mission name (not array index, which shifts when
@@ -347,11 +373,25 @@ function renderOpenTabsMissionCard(mission, missionIndex) {
   // the button on mission #5.
   const stableId = mission._stableId || missionIndex;
 
-  const actionsHtml = tabCount > 0 ? `
-    <button class="action-btn close-tabs" data-action="close-open-tabs" data-open-mission-id="${stableId}">
-      ${ICONS.close}
-      Close all ${tabCount} tab${tabCount !== 1 ? 's' : ''}
-    </button>` : '';
+  // Get duplicate URLs that belong to this mission
+  const missionDupeUrls = tabs.filter(t => dupeMap[t.url]).map(t => t.url);
+  const uniqueDupeUrls = [...new Set(missionDupeUrls)];
+
+  let actionsHtml = '';
+  if (tabCount > 0) {
+    actionsHtml += `
+      <button class="action-btn close-tabs" data-action="close-open-tabs" data-open-mission-id="${stableId}">
+        ${ICONS.close}
+        Close all ${tabCount} tab${tabCount !== 1 ? 's' : ''}
+      </button>`;
+  }
+  if (uniqueDupeUrls.length > 0) {
+    const extraDupes = uniqueDupeUrls.reduce((s, u) => s + dupeMap[u] - 1, 0);
+    actionsHtml += `
+      <button class="action-btn" data-action="dedup-keep-one" data-dupe-urls="${uniqueDupeUrls.map(u => encodeURIComponent(u)).join(',')}">
+        Close ${extraDupes} duplicate${extraDupes !== 1 ? 's' : ''}
+      </button>`;
+  }
 
   return `
     <div class="mission-card" data-open-mission-id="${stableId}">
@@ -609,52 +649,13 @@ async function renderDashboard() {
     openTabsSection.style.display = 'none';
   }
 
-  // ── Duplicate tabs warning ──────────────────────────────────────────────
-  let dupeSection = document.getElementById('duplicatesBanner');
-  if (duplicateTabs.length > 0) {
-    if (!dupeSection) {
-      dupeSection = document.createElement('div');
-      dupeSection.id = 'duplicatesBanner';
-      const openTabsEl = document.getElementById('openTabsSection');
-      if (openTabsEl) openTabsEl.after(dupeSection);
-    }
-    const totalDupes = duplicateTabs.reduce((s, d) => s + d.count - 1, 0);
-    dupeSection.style.display = 'block';
-    dupeSection.innerHTML = `
-      <div class="mission-card" style="border-color: rgba(200, 113, 58, 0.25); background: rgba(200, 113, 58, 0.03);">
-        <div class="status-bar" style="background: var(--accent-amber);"></div>
-        <div class="mission-content">
-          <div class="mission-top">
-            <span class="mission-name">${totalDupes} duplicate tab${totalDupes !== 1 ? 's' : ''}</span>
-            <span class="mission-tag" style="color: var(--accent-amber); background: rgba(200, 113, 58, 0.08);">Duplicates</span>
-          </div>
-          <div class="mission-summary">You have the same page open in multiple tabs.</div>
-          <div class="mission-pages" style="margin-bottom: 4px;">
-            ${duplicateTabs.map(d => {
-              const label = (d.title || d.url);
-              const display = label.length > 40 ? label.slice(0, 40) + '...' : label;
-              return `<span class="page-chip">${display} (${d.count}x)</span>`;
-            }).join('')}
-          </div>
-          <div class="actions">
-            <button class="action-btn close-tabs" data-action="close-all-dupes">
-              ${ICONS.close}
-              Close all duplicates
-            </button>
-            <button class="action-btn" data-action="dedup-keep-one">
-              Keep one copy each
-            </button>
-          </div>
-        </div>
-        <div class="mission-meta">
-          <div class="mission-page-count">${totalDupes}</div>
-          <div class="mission-page-label">extra</div>
-        </div>
-      </div>
-    `;
-  } else if (dupeSection) {
-    dupeSection.style.display = 'none';
-  }
+  // Build a set of duplicate URLs for the card renderer to use
+  const dupeUrlSet = new Set(duplicateTabs.map(d => d.url));
+  const dupeUrlMap = {};
+  duplicateTabs.forEach(d => { dupeUrlMap[d.url] = d.count; });
+
+  // Store on window so renderOpenTabsMissionCard can access it
+  window._dupeUrlMap = dupeUrlMap;
 
   // ── Step 3: Fetch history missions ("Pick back up") ──────────────────────
   // Pass all currently open URLs as a filter so the server can exclude
@@ -712,18 +713,11 @@ async function renderDashboard() {
     cleanupBanner.style.display = 'none';
   }
 
-  // ── Step 6: Nudge banner ──────────────────────────────────────────────────
-  // Show when there are history missions to pick back up
+  // Hide nudge banner — no longer used
   const nudgeBanner = document.getElementById('nudgeBanner');
-  const nudgeText   = document.getElementById('nudgeText');
-  if (historyMissions.length > 0 && nudgeBanner && nudgeText) {
-    nudgeText.innerHTML = `<strong>${historyMissions.length} mission${historyMissions.length !== 1 ? 's' : ''} ${historyMissions.length === 1 ? 'is' : 'are'} waiting.</strong> You did work here but have no tabs open for ${historyMissions.length === 1 ? 'it' : 'them'} now. Pick one to continue, or let it go.`;
-    nudgeBanner.style.display = 'flex';
-  } else if (nudgeBanner) {
-    nudgeBanner.style.display = 'none';
-  }
+  if (nudgeBanner) nudgeBanner.style.display = 'none';
 
-  // ── Step 7: Footer stats ──────────────────────────────────────────────────
+  // ── Step 6: Footer stats ──────────────────────────────────────────────────
   const statMissions = document.getElementById('statMissions');
   const statTabs     = document.getElementById('statTabs');
   const statStale    = document.getElementById('statStale');
@@ -800,36 +794,24 @@ document.addEventListener('click', async (e) => {
   }
 
   // ---- close-all-dupes: close every duplicate tab ----
-  if (action === 'close-all-dupes') {
-    const urls = duplicateTabs.map(d => d.url);
-    await sendToExtension('closeDuplicates', { urls, keepOne: false });
-    playCloseSound();
-    const banner = document.getElementById('duplicatesBanner');
-    if (banner) {
-      banner.querySelector('.mission-card').classList.add('closing');
-      setTimeout(() => { banner.style.display = 'none'; }, 500);
-    }
-    await fetchOpenTabs();
-    const closed = duplicateTabs.reduce((s, d) => s + d.count, 0);
-    duplicateTabs = [];
-    showToast(`Closed all ${closed} duplicate tabs`);
-    return;
-  }
 
   // ---- dedup-keep-one: close extras but keep one copy of each ----
   if (action === 'dedup-keep-one') {
-    const urls = duplicateTabs.map(d => d.url);
+    // URLs come from the button's data attribute (per-mission duplicates)
+    const urlsEncoded = actionEl.dataset.dupeUrls || '';
+    const urls = urlsEncoded.split(',').map(u => decodeURIComponent(u)).filter(Boolean);
+    if (urls.length === 0) return;
+
     await sendToExtension('closeDuplicates', { urls, keepOne: true });
     playCloseSound();
-    const banner = document.getElementById('duplicatesBanner');
-    if (banner) {
-      banner.querySelector('.mission-card').classList.add('closing');
-      setTimeout(() => { banner.style.display = 'none'; }, 500);
-    }
     await fetchOpenTabs();
-    const closed = duplicateTabs.reduce((s, d) => s + d.count - 1, 0);
-    duplicateTabs = [];
-    showToast(`Closed ${closed} extra tab${closed !== 1 ? 's' : ''}, kept one copy each`);
+
+    // Remove the dupe button since they're cleaned up
+    actionEl.style.transition = 'opacity 0.2s';
+    actionEl.style.opacity = '0';
+    setTimeout(() => actionEl.remove(), 200);
+
+    showToast(`Closed duplicates, kept one copy each`);
     return;
   }
 
@@ -847,8 +829,7 @@ document.addEventListener('click', async (e) => {
     // Animate the card out — the mission is "done" once all tabs are closed
     if (card) {
       playCloseSound();
-      card.classList.add('closing');
-      setTimeout(() => card.remove(), 400);
+      animateCardOut(card);
     }
 
     // Remove from in-memory store so stale count stays accurate
@@ -905,8 +886,7 @@ document.addEventListener('click', async (e) => {
     // Animate the card out
     if (card) {
       playCloseSound();
-      card.classList.add('closing');
-      setTimeout(() => card.remove(), 400);
+      animateCardOut(card);
     }
 
     showToast(`Archived "${mission.name}"`);
@@ -938,8 +918,7 @@ document.addEventListener('click', async (e) => {
     // Animate the card out
     if (card) {
       playCloseSound();
-      card.classList.add('closing');
-      setTimeout(() => card.remove(), 400);
+      animateCardOut(card);
     }
 
     showToast(`Let go of "${mission.name}"`);
@@ -972,8 +951,7 @@ document.addEventListener('click', async (e) => {
     // Animate card removal
     if (card) {
       playCloseSound();
-      card.classList.add('closing');
-      setTimeout(() => card.remove(), 400);
+      animateCardOut(card);
     }
     showToast(`Closed ${tabsToClose.length} tab${tabsToClose.length !== 1 ? 's' : ''} from ${domain}`);
     await updateStaleCount();

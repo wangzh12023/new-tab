@@ -272,39 +272,24 @@ header {
   transform: translateY(-1px);
 }
 
-/* Closing animation — card sweeps right and fades out, then collapses */
+/* Closing animation — two phases for smoothness:
+   Phase 1: card fades and slides right (opacity + transform, GPU-accelerated)
+   Phase 2: height collapses via JS adding .collapsed class after fade */
 .mission-card.closing {
-  animation: cardClose 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) forwards;
+  opacity: 0;
+  transform: translateX(60px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
   pointer-events: none;
 }
 
-@keyframes cardClose {
-  0% {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-    max-height: 300px;
-    margin-bottom: 12px;
-  }
-  40% {
-    opacity: 0.6;
-    transform: translateX(40px) scale(0.97);
-  }
-  70% {
-    opacity: 0;
-    transform: translateX(80px) scale(0.95);
-    max-height: 300px;
-    margin-bottom: 12px;
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(80px) scale(0.95);
-    max-height: 0;
-    padding-top: 0;
-    padding-bottom: 0;
-    margin-bottom: 0;
-    border-width: 0;
-    overflow: hidden;
-  }
+.mission-card.collapsed {
+  max-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-bottom: 0 !important;
+  border-width: 0 !important;
+  overflow: hidden;
+  transition: max-height 0.25s ease, padding 0.25s ease, margin 0.25s ease, border-width 0.25s ease;
 }
 
 .status-bar {
