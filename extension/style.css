@@ -1156,3 +1156,413 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   opacity: 0.6;
   flex-shrink: 0;
 }
+
+/* ============================================================
+   Top sections — quick links + workspaces
+   ============================================================ */
+.top-section {
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--warm-gray);
+}
+
+.top-section .section-header {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+/* ============================================================
+   Quick links — favorite sites navigation
+   ============================================================ */
+.quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.quick-links-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.quick-link {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 76px;
+  height: 76px;
+  padding: 10px 6px;
+  background: var(--card-bg);
+  border: 1px solid var(--warm-gray);
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--ink);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+}
+
+.quick-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px var(--shadow);
+  border-color: rgba(26, 22, 19, 0.18);
+}
+
+.quick-link-favicon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: var(--paper);
+  flex-shrink: 0;
+}
+
+.quick-link-fallback {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Newsreader', serif;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--card-bg);
+  background: var(--accent-slate);
+  flex-shrink: 0;
+}
+
+.quick-link-label {
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--muted);
+  max-width: 100%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+
+.quick-link:hover .quick-link-label {
+  color: var(--ink);
+}
+
+.quick-link-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent-rose);
+  color: var(--card-bg);
+  border: none;
+  font-size: 14px;
+  line-height: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.quick-link:hover .quick-link-remove {
+  display: flex;
+}
+
+.quick-link-remove:hover {
+  filter: brightness(0.9);
+}
+
+.quick-link-add {
+  width: 76px;
+  height: 76px;
+  background: transparent;
+  border: 1px dashed rgba(26, 22, 19, 0.25);
+  border-radius: 10px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.quick-link-add:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: var(--card-bg);
+}
+
+.quick-link-add svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Quick link modal */
+.quick-link-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 22, 19, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+  animation: quick-link-modal-fade 0.15s ease;
+}
+
+@keyframes quick-link-modal-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.quick-link-modal-card {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 28px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 20px 60px rgba(26, 22, 19, 0.25);
+}
+
+.quick-link-modal-title {
+  font-family: 'Newsreader', serif;
+  font-weight: 400;
+  font-size: 22px;
+  margin-bottom: 20px;
+  color: var(--ink);
+}
+
+.quick-link-modal-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  margin-top: 14px;
+}
+
+.quick-link-modal-label:first-of-type {
+  margin-top: 0;
+}
+
+.quick-link-modal-input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: 'DM Sans', sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--warm-gray);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.quick-link-modal-input:focus {
+  border-color: var(--accent-slate);
+}
+
+.quick-link-modal-error {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--accent-rose);
+}
+
+.quick-link-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.quick-link-modal-btn {
+  padding: 8px 18px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.quick-link-modal-btn-ghost {
+  background: transparent;
+  color: var(--muted);
+}
+
+.quick-link-modal-btn-ghost:hover {
+  color: var(--ink);
+}
+
+.quick-link-modal-btn-primary {
+  background: var(--ink);
+  color: var(--card-bg);
+}
+
+.quick-link-modal-btn-primary:hover {
+  filter: brightness(1.15);
+}
+
+.quick-link-modal-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: -12px;
+  margin-bottom: 18px;
+  line-height: 1.45;
+}
+
+/* ============================================================
+   Workspaces — saved sets of tabs (Edge-style workspaces)
+   ============================================================ */
+.workspaces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.workspaces-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.workspace-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  width: 200px;
+  min-height: 92px;
+  padding: 14px 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--warm-gray);
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+  font-family: 'DM Sans', sans-serif;
+  color: var(--ink);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.workspace-tile:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px var(--shadow);
+  border-color: rgba(26, 22, 19, 0.18);
+}
+
+.workspace-tile-name {
+  font-family: 'Newsreader', serif;
+  font-weight: 400;
+  font-size: 16px;
+  letter-spacing: -0.2px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-tile-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+}
+
+.workspace-tile-favicons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-tile-favicons img {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
+  background: var(--paper);
+}
+
+.workspace-tile-count {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.workspace-tile-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent-rose);
+  color: var(--card-bg);
+  border: none;
+  font-size: 14px;
+  line-height: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.workspace-tile:hover .workspace-tile-remove {
+  display: flex;
+}
+
+.workspace-tile-remove:hover {
+  filter: brightness(0.9);
+}
+
+.workspace-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 92px;
+  padding: 14px 18px;
+  background: transparent;
+  border: 1px dashed rgba(26, 22, 19, 0.25);
+  border-radius: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.workspace-add:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: var(--card-bg);
+}
+
+.workspace-add svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.workspace-add-label {
+  white-space: nowrap;
+}
+
+.workspaces-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+  align-self: center;
+}

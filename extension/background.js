@@ -60,34 +60,206 @@ async function updateBadge() {
   }
 }
 
+
+// Workspace windows ---------------------------------------------------------
+//
+// workspaceWindows is stored as { [windowId]: workspaceId }. When a workspace
+// is opened from the dashboard, app.js registers the newly-created Chrome
+// window here. From then on, tab changes in that window update the saved
+// workspace automatically.
+
+function isSaveableWorkspaceTab(tab) {
+  const url = tab.url || tab.pendingUrl || '';
+  if (!url) return false;
+  if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) return false;
+  if (url.startsWith('edge://') || url.startsWith('about:')) return false;
+  if (url.startsWith('devtools://')) return false;
+  return /^(https?|file|ftp):/i.test(url);
+}
+
+function getHostFromUrl(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); }
+  catch { return ''; }
+}
+
+async function getWorkspaceWindows() {
+  const { workspaceWindows = {} } = await chrome.storage.local.get('workspaceWindows');
+  return workspaceWindows;
+}
+
+async function setWorkspaceWindows(workspaceWindows) {
+  await chrome.storage.local.set({ workspaceWindows });
+}
+
+async function registerWorkspaceWindow(workspaceId, windowId) {
+  if (!workspaceId || !windowId) return;
+  const workspaceWindows = await getWorkspaceWindows();
+  workspaceWindows[String(windowId)] = workspaceId;
+  await setWorkspaceWindows(workspaceWindows);
+  await syncWorkspaceWindow(windowId);
+}
+
+async function removeWorkspaceWindow(windowId) {
+  const workspaceWindows = await getWorkspaceWindows();
+  const key = String(windowId);
+  if (!workspaceWindows[key]) return;
+  delete workspaceWindows[key];
+  await setWorkspaceWindows(workspaceWindows);
+}
+
+async function workspaceIdForWindow(windowId) {
+  const workspaceWindows = await getWorkspaceWindows();
+  return workspaceWindows[String(windowId)] || null;
+}
+
+async function syncWorkspaceWindow(windowId) {
+  const workspaceWindows = await getWorkspaceWindows();
+  const workspaceId = workspaceWindows[String(windowId)];
+  if (!workspaceId) return;
+
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({ windowId: Number(windowId) });
+  } catch {
+    return;
+  }
+
+  const savedTabs = tabs
+    .filter(isSaveableWorkspaceTab)
+    .sort((a, b) => a.index - b.index)
+    .map(tab => {
+      const url = tab.url || tab.pendingUrl || '';
+      return {
+        url,
+        title: tab.title || '',
+        host: getHostFromUrl(url),
+      };
+    });
+
+  const { workspaces = [] } = await chrome.storage.local.get('workspaces');
+  const idx = workspaces.findIndex(ws => ws.id === workspaceId);
+  if (idx === -1) {
+    delete workspaceWindows[String(windowId)];
+    await setWorkspaceWindows(workspaceWindows);
+    return;
+  }
+
+  workspaces[idx] = {
+    ...workspaces[idx],
+    tabs: savedTabs,
+    savedAt: new Date().toISOString(),
+  };
+  await chrome.storage.local.set({ workspaces });
+}
+
+async function syncIfWorkspaceWindow(windowId) {
+  if (!windowId) return;
+  const workspaceId = await workspaceIdForWindow(windowId);
+  if (!workspaceId) return;
+  await syncWorkspaceWindow(windowId);
+}
+
+async function cleanupWorkspaceWindows() {
+  const workspaceWindows = await getWorkspaceWindows();
+  const ids = Object.keys(workspaceWindows);
+  if (ids.length === 0) return;
+
+  const openWindows = await chrome.windows.getAll();
+  const openIds = new Set(openWindows.map(win => String(win.id)));
+  let changed = false;
+
+  for (const id of ids) {
+    if (!openIds.has(id)) {
+      delete workspaceWindows[id];
+      changed = true;
+    }
+  }
+
+  if (changed) await setWorkspaceWindows(workspaceWindows);
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!message || message.type !== 'tab-out:workspace-window-opened') return;
+
+  registerWorkspaceWindow(message.workspaceId, message.windowId)
+    .then(() => sendResponse({ ok: true }))
+    .catch(err => {
+      console.warn('[tab-out] Failed to register workspace window:', err);
+      sendResponse({ ok: false });
+    });
+
+  return true;
+});
+
 // ─── Event listeners ──────────────────────────────────────────────────────────
 
 // Update badge when the extension is first installed
 chrome.runtime.onInstalled.addListener(() => {
   updateBadge();
+  cleanupWorkspaceWindows().catch(() => {});
 });
 
 // Update badge when Chrome starts up
 chrome.runtime.onStartup.addListener(() => {
   updateBadge();
+  cleanupWorkspaceWindows().catch(() => {});
 });
 
 // Update badge whenever a tab is opened
-chrome.tabs.onCreated.addListener(() => {
+chrome.tabs.onCreated.addListener(tab => {
   updateBadge();
+  syncIfWorkspaceWindow(tab.windowId).catch(() => {});
 });
 
 // Update badge whenever a tab is closed
-chrome.tabs.onRemoved.addListener(() => {
+chrome.tabs.onRemoved.addListener((_tabId, removeInfo) => {
   updateBadge();
+  if (removeInfo.isWindowClosing) return;
+  syncIfWorkspaceWindow(removeInfo.windowId).catch(() => {});
 });
 
 // Update badge when a tab's URL changes (e.g. navigating to/from chrome://)
-chrome.tabs.onUpdated.addListener(() => {
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
   updateBadge();
+  if (changeInfo.url || changeInfo.title || changeInfo.status || tab.pendingUrl) {
+    syncIfWorkspaceWindow(tab.windowId).catch(() => {});
+  }
+});
+
+chrome.tabs.onActivated.addListener(activeInfo => {
+  syncIfWorkspaceWindow(activeInfo.windowId).catch(() => {});
+});
+
+chrome.tabs.onMoved.addListener((_tabId, moveInfo) => {
+  syncIfWorkspaceWindow(moveInfo.windowId).catch(() => {});
+});
+
+chrome.tabs.onAttached.addListener((_tabId, attachInfo) => {
+  syncIfWorkspaceWindow(attachInfo.newWindowId).catch(() => {});
+});
+
+chrome.tabs.onDetached.addListener((_tabId, detachInfo) => {
+  syncIfWorkspaceWindow(detachInfo.oldWindowId).catch(() => {});
+});
+
+chrome.tabs.onReplaced.addListener((addedTabId) => {
+  chrome.tabs.get(addedTabId)
+    .then(tab => syncIfWorkspaceWindow(tab.windowId))
+    .catch(() => {});
+});
+
+chrome.windows.onFocusChanged.addListener(windowId => {
+  if (windowId !== chrome.windows.WINDOW_ID_NONE) {
+    syncIfWorkspaceWindow(windowId).catch(() => {});
+  }
+});
+
+chrome.windows.onRemoved.addListener(windowId => {
+  removeWorkspaceWindow(windowId).catch(() => {});
 });
 
 // ─── Initial run ─────────────────────────────────────────────────────────────
 
 // Run once immediately when the service worker first loads
 updateBadge();
+cleanupWorkspaceWindows().catch(() => {});

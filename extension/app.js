@@ -1170,8 +1170,386 @@ async function renderStaticDashboard() {
 
 async function renderDashboard() {
   await renderStaticDashboard();
+  await renderQuickLinks();
+  await renderWorkspaces();
 }
 
+
+/* ----------------------------------------------------------------
+   QUICK LINKS — favorite sites navigation bar at the top
+
+   Stored in chrome.storage.local under "quickLinks" as:
+   [ { id, url, name, host }, ... ]
+
+   Favicons are fetched from Google's public favicon service so we
+   don't need to grant the extension <all_urls> host permissions.
+   ---------------------------------------------------------------- */
+
+async function getQuickLinks() {
+  const { quickLinks = [] } = await chrome.storage.local.get('quickLinks');
+  return quickLinks;
+}
+
+async function setQuickLinks(quickLinks) {
+  await chrome.storage.local.set({ quickLinks });
+}
+
+function normalizeQuickLinkUrl(raw) {
+  let value = (raw || '').trim();
+  if (!value) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = 'https://' + value;
+  try {
+    const u = new URL(value);
+    if (!u.hostname || !u.hostname.includes('.')) return null;
+    return u;
+  } catch {
+    return null;
+  }
+}
+
+function faviconUrlFor(host) {
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function renderQuickLinkTile(link) {
+  const initial = (link.name || link.host || '?').trim().charAt(0).toUpperCase();
+  const fav     = faviconUrlFor(link.host);
+  const url     = escapeHtml(link.url);
+  const name    = escapeHtml(link.name || link.host);
+  return `
+    <a class="quick-link" href="${url}" data-action="open-quick-link" data-quick-link-id="${link.id}" title="${name}">
+      <img class="quick-link-favicon" src="${escapeHtml(fav)}" alt="" loading="lazy">
+      <span class="quick-link-fallback" style="display:none">${escapeHtml(initial)}</span>
+      <span class="quick-link-label">${name}</span>
+      <span class="quick-link-remove" data-action="remove-quick-link" data-quick-link-id="${link.id}" title="Remove" role="button" aria-label="Remove">&times;</span>
+    </a>
+  `;
+}
+
+async function renderQuickLinks() {
+  const list = document.getElementById('quickLinksList');
+  if (!list) return;
+  const links = await getQuickLinks();
+  list.innerHTML = links.map(renderQuickLinkTile).join('');
+
+  // CSP-safe fallback: swap to letter badge if favicon fails to load
+  list.querySelectorAll('.quick-link-favicon').forEach(img => {
+    img.addEventListener('error', () => {
+      img.style.display = 'none';
+      const fb = img.nextElementSibling;
+      if (fb && fb.classList.contains('quick-link-fallback')) {
+        fb.style.display = 'flex';
+      }
+    });
+  });
+
+  const countEl = document.getElementById('quickLinksCount');
+  if (countEl) countEl.textContent = links.length ? `${links.length} site${links.length === 1 ? '' : 's'}` : '';
+}
+
+function openQuickLinkModal() {
+  const modal = document.getElementById('quickLinkModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  const urlInput  = document.getElementById('quickLinkUrlInput');
+  const nameInput = document.getElementById('quickLinkNameInput');
+  const errorEl   = document.getElementById('quickLinkModalError');
+  if (urlInput)  urlInput.value = '';
+  if (nameInput) nameInput.value = '';
+  if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+  if (urlInput) setTimeout(() => urlInput.focus(), 50);
+}
+
+function closeQuickLinkModal() {
+  const modal = document.getElementById('quickLinkModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function showQuickLinkError(msg) {
+  const errorEl = document.getElementById('quickLinkModalError');
+  if (errorEl) {
+    errorEl.textContent = msg;
+    errorEl.style.display = 'block';
+  }
+}
+
+async function saveQuickLinkFromModal() {
+  const urlInput  = document.getElementById('quickLinkUrlInput');
+  const nameInput = document.getElementById('quickLinkNameInput');
+  if (!urlInput) return;
+
+  const parsed = normalizeQuickLinkUrl(urlInput.value);
+  if (!parsed) {
+    showQuickLinkError('Please enter a valid URL (e.g. https://example.com).');
+    return;
+  }
+
+  const host = parsed.hostname.replace(/^www\./, '');
+  const name = (nameInput && nameInput.value.trim()) || host;
+  const link = {
+    id:   Date.now().toString(),
+    url:  parsed.toString(),
+    host,
+    name,
+  };
+
+  const links = await getQuickLinks();
+  links.push(link);
+  await setQuickLinks(links);
+
+  closeQuickLinkModal();
+  await renderQuickLinks();
+  showToast(`Added ${name}`);
+}
+
+async function removeQuickLinkById(id) {
+  const links = await getQuickLinks();
+  const next  = links.filter(l => l.id !== id);
+  if (next.length === links.length) return;
+  await setQuickLinks(next);
+  await renderQuickLinks();
+}
+
+
+/* ----------------------------------------------------------------
+   WORKSPACES — save & restore sets of tabs (Edge-style)
+
+   Stored in chrome.storage.local under "workspaces" as:
+   [ { id, name, savedAt, tabs: [{ url, title, host }] }, ... ]
+   ---------------------------------------------------------------- */
+
+async function getWorkspaces() {
+  const { workspaces = [] } = await chrome.storage.local.get('workspaces');
+  return workspaces;
+}
+
+async function setWorkspaces(workspaces) {
+  await chrome.storage.local.set({ workspaces });
+}
+
+// Tabs that make sense to save: real http(s)/file pages, not the new-tab page,
+// chrome:// settings, devtools, etc.
+function isSaveableTab(tab) {
+  const url = tab.url || '';
+  if (!url) return false;
+  if (tab.isTabOut) return false;
+  if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) return false;
+  if (url.startsWith('edge://') || url.startsWith('about:')) return false;
+  if (url.startsWith('devtools://')) return false;
+  return /^(https?|file|ftp):/i.test(url);
+}
+
+function saveableOpenTabs() {
+  return openTabs.filter(isSaveableTab);
+}
+
+async function saveableTabsInCurrentWindow() {
+  const currentWindow = await chrome.windows.getCurrent();
+  return openTabs.filter(tab =>
+    tab.windowId === currentWindow.id && isSaveableTab(tab)
+  );
+}
+
+function getHostFromUrl(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); }
+  catch { return ''; }
+}
+
+function renderWorkspaceTile(ws) {
+  const previewHosts = (ws.tabs || []).slice(0, 4).map(t => t.host || getHostFromUrl(t.url)).filter(Boolean);
+  const favIcons = previewHosts.map(h =>
+    `<img src="${escapeHtml(faviconUrlFor(h))}" alt="" loading="lazy">`
+  ).join('');
+  const count = (ws.tabs || []).length;
+  const name  = escapeHtml(ws.name || 'Untitled workspace');
+  const titleAttr = `Open ${name} in a new window`;
+
+  return `
+    <button class="workspace-tile" data-action="open-workspace" data-workspace-id="${ws.id}" title="${titleAttr}">
+      <div class="workspace-tile-name">${name}</div>
+      <div class="workspace-tile-meta">
+        <div class="workspace-tile-favicons">${favIcons}</div>
+        <div class="workspace-tile-count">${count} tab${count === 1 ? '' : 's'}</div>
+      </div>
+      <span class="workspace-tile-remove" data-action="remove-workspace" data-workspace-id="${ws.id}" title="Delete workspace" role="button" aria-label="Delete workspace">&times;</span>
+    </button>
+  `;
+}
+
+async function renderWorkspaces() {
+  const list = document.getElementById('workspacesList');
+  if (!list) return;
+  const workspaces = await getWorkspaces();
+  list.innerHTML = workspaces.map(ws => renderWorkspaceTile(ws)).join('');
+
+  const countEl = document.getElementById('workspacesCount');
+  if (countEl) {
+    countEl.textContent = workspaces.length
+      ? `${workspaces.length} saved`
+      : '';
+  }
+}
+
+async function openWorkspaceModal() {
+  const modal = document.getElementById('workspaceModal');
+  if (!modal) return;
+
+  // Refresh — user may have opened/closed tabs since the dashboard loaded
+  await fetchOpenTabs();
+  const saveable = await saveableTabsInCurrentWindow();
+
+  const subtitle = document.getElementById('workspaceModalSubtitle');
+  if (subtitle) {
+    subtitle.textContent = saveable.length
+      ? `Saving ${saveable.length} open tab${saveable.length === 1 ? '' : 's'}.`
+      : 'No saveable tabs are open right now.';
+  }
+
+  const errorEl = document.getElementById('workspaceModalError');
+  if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+
+  const input = document.getElementById('workspaceNameInput');
+  if (input) {
+    // Default name: "Workspace · April 4"
+    const today = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    input.value = `Workspace · ${today}`;
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+  }
+
+  modal.style.display = 'flex';
+}
+
+function closeWorkspaceModal() {
+  const modal = document.getElementById('workspaceModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function showWorkspaceError(msg) {
+  const errorEl = document.getElementById('workspaceModalError');
+  if (errorEl) {
+    errorEl.textContent = msg;
+    errorEl.style.display = 'block';
+  }
+}
+
+async function saveWorkspaceFromModal() {
+  const input = document.getElementById('workspaceNameInput');
+  const name  = (input && input.value.trim()) || '';
+  if (!name) {
+    showWorkspaceError('Please enter a name for this workspace.');
+    return;
+  }
+
+  await fetchOpenTabs();
+  const sourceTabs = await saveableTabsInCurrentWindow();
+  const tabs = sourceTabs.map(t => ({
+    url:   t.url,
+    title: t.title || '',
+    host:  getHostFromUrl(t.url),
+  }));
+
+  if (tabs.length === 0) {
+    showWorkspaceError('No saveable tabs are open right now.');
+    return;
+  }
+
+  const workspace = {
+    id:      Date.now().toString(),
+    name,
+    savedAt: new Date().toISOString(),
+    tabs,
+  };
+
+  const list = await getWorkspaces();
+  list.push(workspace);
+  await setWorkspaces(list);
+
+  closeWorkspaceModal();
+  const currentWindow = await chrome.windows.getCurrent();
+  await registerWorkspaceWindow(workspace.id, currentWindow.id);
+
+  await renderWorkspaces();
+  showToast(`Saved "${name}" and linked this window`);
+}
+
+async function openWorkspaceWindow(ws) {
+  const urls = (ws.tabs || []).map(tab => tab.url).filter(Boolean);
+  if (urls.length === 0) return null;
+
+  try {
+    return await chrome.windows.create({ url: urls, focused: true });
+  } catch (err) {
+    console.warn('[tab-out] Failed to open workspace window in one pass:', err);
+  }
+
+  const createdWindow = await chrome.windows.create({ url: urls[0], focused: true });
+  for (const url of urls.slice(1)) {
+    try {
+      await chrome.tabs.create({ windowId: createdWindow.id, url, active: false });
+    } catch (err) {
+      console.warn('[tab-out] Failed to open workspace tab:', url, err);
+    }
+  }
+  return createdWindow;
+}
+
+async function registerWorkspaceWindow(workspaceId, windowId) {
+  if (!workspaceId || !windowId) return;
+
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'tab-out:workspace-window-opened',
+      workspaceId,
+      windowId,
+    });
+  } catch {
+    const { workspaceWindows = {} } = await chrome.storage.local.get('workspaceWindows');
+    workspaceWindows[String(windowId)] = workspaceId;
+    await chrome.storage.local.set({ workspaceWindows });
+  }
+}
+
+async function removeWorkspaceWindowMappings(workspaceId) {
+  const { workspaceWindows = {} } = await chrome.storage.local.get('workspaceWindows');
+  let changed = false;
+
+  for (const [windowId, mappedWorkspaceId] of Object.entries(workspaceWindows)) {
+    if (mappedWorkspaceId === workspaceId) {
+      delete workspaceWindows[windowId];
+      changed = true;
+    }
+  }
+
+  if (changed) await chrome.storage.local.set({ workspaceWindows });
+}
+
+async function openWorkspaceById(id) {
+  const list = await getWorkspaces();
+  const ws = list.find(w => w.id === id);
+  if (!ws || !ws.tabs || ws.tabs.length === 0) return;
+
+  const workspaceWindow = await openWorkspaceWindow(ws);
+  await registerWorkspaceWindow(ws.id, workspaceWindow && workspaceWindow.id);
+
+  await renderWorkspaces();
+  showToast(`Opened "${ws.name}" in a new window`);
+}
+
+async function removeWorkspaceById(id) {
+  const list = await getWorkspaces();
+  const next = list.filter(w => w.id !== id);
+  if (next.length === list.length) return;
+  await setWorkspaces(next);
+  await removeWorkspaceWindowMappings(id);
+
+  await renderWorkspaces();
+}
 
 /* ----------------------------------------------------------------
    EVENT HANDLERS — using event delegation
@@ -1187,6 +1565,79 @@ document.addEventListener('click', async (e) => {
   if (!actionEl) return;
 
   const action = actionEl.dataset.action;
+
+  // ---- Quick link: remove tile (intercept before the link click) ----
+  if (action === 'remove-quick-link') {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = actionEl.dataset.quickLinkId;
+    if (id) await removeQuickLinkById(id);
+    return;
+  }
+
+  // ---- Quick link: tile click — let the <a> navigate normally ----
+  if (action === 'open-quick-link') {
+    return;
+  }
+
+  // ---- Quick link: open the "add a site" modal ----
+  if (action === 'open-quick-link-modal') {
+    openQuickLinkModal();
+    return;
+  }
+
+  // ---- Quick link: close modal (backdrop or Cancel) ----
+  if (action === 'close-quick-link-modal') {
+    // Clicks on the modal card itself should not close it
+    if (e.target.closest('[data-modal-stop]') && !actionEl.classList.contains('quick-link-modal-btn')) {
+      return;
+    }
+    closeQuickLinkModal();
+    return;
+  }
+
+  // ---- Quick link: save new entry ----
+  if (action === 'save-quick-link') {
+    await saveQuickLinkFromModal();
+    return;
+  }
+
+  // ---- Workspace: remove tile (intercept before the tile click) ----
+  if (action === 'remove-workspace') {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = actionEl.dataset.workspaceId;
+    if (id) await removeWorkspaceById(id);
+    return;
+  }
+
+  // ---- Workspace: open all tabs in workspace ----
+  if (action === 'open-workspace') {
+    const id = actionEl.dataset.workspaceId;
+    if (id) await openWorkspaceById(id);
+    return;
+  }
+
+  // ---- Workspace: open the "save current tabs" modal ----
+  if (action === 'open-workspace-modal') {
+    await openWorkspaceModal();
+    return;
+  }
+
+  // ---- Workspace: close modal (backdrop or Cancel) ----
+  if (action === 'close-workspace-modal') {
+    if (e.target.closest('[data-modal-stop]') && !actionEl.classList.contains('quick-link-modal-btn')) {
+      return;
+    }
+    closeWorkspaceModal();
+    return;
+  }
+
+  // ---- Workspace: save current tabs ----
+  if (action === 'save-workspace') {
+    await saveWorkspaceFromModal();
+    return;
+  }
 
   // ---- Close duplicate Tab Out tabs ----
   if (action === 'close-tabout-dupes') {
@@ -1476,7 +1927,44 @@ document.addEventListener('input', async (e) => {
 });
 
 
+// ---- Modal keyboard shortcuts: Enter to save, Escape to close ----
+document.addEventListener('keydown', async (e) => {
+  const quickLinkModal = document.getElementById('quickLinkModal');
+  const workspaceModal = document.getElementById('workspaceModal');
+  const quickLinkOpen  = quickLinkModal && quickLinkModal.style.display !== 'none';
+  const workspaceOpen  = workspaceModal && workspaceModal.style.display !== 'none';
+
+  if (!quickLinkOpen && !workspaceOpen) return;
+
+  if (e.key === 'Escape') {
+    if (quickLinkOpen) closeQuickLinkModal();
+    if (workspaceOpen) closeWorkspaceModal();
+    return;
+  }
+
+  if (e.key === 'Enter') {
+    const target = e.target;
+    if (!target) return;
+    if (quickLinkOpen && (target.id === 'quickLinkUrlInput' || target.id === 'quickLinkNameInput')) {
+      e.preventDefault();
+      await saveQuickLinkFromModal();
+    } else if (workspaceOpen && target.id === 'workspaceNameInput') {
+      e.preventDefault();
+      await saveWorkspaceFromModal();
+    }
+  }
+});
+
+
 /* ----------------------------------------------------------------
    INITIALIZE
    ---------------------------------------------------------------- */
 renderDashboard();
+
+if (chrome.storage && chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'local' && changes.workspaces) {
+      renderWorkspaces().catch(() => {});
+    }
+  });
+}
