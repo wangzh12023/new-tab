@@ -212,24 +212,14 @@ chrome.tabs.onCreated.addListener(tab => {
 });
 
 // Update badge whenever a tab is closed
-// When the window is closing (isWindowClosing), we sync once on the first
-// removal so the workspace saves its tab list while tabs are still queryable.
-// Subsequent removals for the same closing window are skipped to avoid
-// progressively overwriting with fewer and fewer tabs.
-const closingWindows = new Set();
-
+// Skip sync when the whole window is closing — Chrome removes tabs one by one
+// during window close, so syncing would progressively overwrite the workspace
+// with fewer and fewer tabs. By skipping, the workspace keeps its last known
+// good state (updated by onCreated/onUpdated/etc. during the session).
 chrome.tabs.onRemoved.addListener((_tabId, removeInfo) => {
   updateBadge();
-
-  if (removeInfo.isWindowClosing) {
-    if (closingWindows.has(removeInfo.windowId)) return;
-    closingWindows.add(removeInfo.windowId);
-    syncIfWorkspaceWindow(removeInfo.windowId)
-      .finally(() => { closingWindows.delete(removeInfo.windowId); })
-      .catch(() => {});
-  } else {
-    syncIfWorkspaceWindow(removeInfo.windowId).catch(() => {});
-  }
+  if (removeInfo.isWindowClosing) return;
+  syncIfWorkspaceWindow(removeInfo.windowId).catch(() => {});
 });
 
 // Update badge when a tab's URL changes (e.g. navigating to/from chrome://)
