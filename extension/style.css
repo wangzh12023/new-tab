@@ -1304,6 +1304,64 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   height: 22px;
 }
 
+/* Drag & drop reordering */
+.quick-link-dragging {
+  opacity: 0.4;
+}
+
+.quick-link-drop-target {
+  border-color: var(--ink) !important;
+  box-shadow: 0 0 0 2px var(--accent-slate, rgba(26, 22, 19, 0.45)) inset;
+}
+
+/* Right-click context menu */
+.quick-link-context-menu {
+  position: fixed;
+  z-index: 1100;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--card-bg);
+  border: 1px solid var(--warm-gray);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow);
+  display: none;
+}
+
+.quick-link-context-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.quick-link-context-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.quick-link-context-item:hover {
+  background: var(--paper);
+}
+
+.quick-link-context-item-danger {
+  color: var(--accent-rose, #b54848);
+}
+
+.quick-link-context-item-danger:hover {
+  background: rgba(181, 72, 72, 0.08);
+}
+
 /* Quick link modal */
 .quick-link-modal {
   position: fixed;

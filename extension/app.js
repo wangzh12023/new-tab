@@ -1223,7 +1223,7 @@ function renderQuickLinkTile(link) {
   const url     = escapeHtml(link.url);
   const name    = escapeHtml(link.name || link.host);
   return `
-    <a class="quick-link" href="${url}" data-action="open-quick-link" data-quick-link-id="${link.id}" title="${name}">
+    <a class="quick-link" href="${url}" data-action="open-quick-link" data-quick-link-id="${link.id}" draggable="true" title="${name}">
       <img class="quick-link-favicon" src="${escapeHtml(fav)}" alt="" loading="lazy">
       <span class="quick-link-fallback" style="display:none">${escapeHtml(initial)}</span>
       <span class="quick-link-label">${name}</span>
@@ -1232,11 +1232,23 @@ function renderQuickLinkTile(link) {
   `;
 }
 
+function renderQuickLinkAddButton() {
+  return `
+    <button class="quick-link-add" data-action="open-quick-link-modal" title="Add a site">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+      </svg>
+    </button>
+  `;
+}
+
 async function renderQuickLinks() {
   const list = document.getElementById('quickLinksList');
   if (!list) return;
   const links = await getQuickLinks();
-  list.innerHTML = links.map(renderQuickLinkTile).join('');
+  // Tiles + the add button share the same flex container so the "+" always
+  // wraps onto the same row as the last tile (no orphaned third row).
+  list.innerHTML = links.map(renderQuickLinkTile).join('') + renderQuickLinkAddButton();
 
   // CSP-safe fallback: swap to letter badge if favicon fails to load
   list.querySelectorAll('.quick-link-favicon').forEach(img => {
@@ -1249,26 +1261,112 @@ async function renderQuickLinks() {
     });
   });
 
+  attachQuickLinkDragHandlers(list);
+
   const countEl = document.getElementById('quickLinksCount');
   if (countEl) countEl.textContent = links.length ? `${links.length} site${links.length === 1 ? '' : 's'}` : '';
 }
 
+/* ----------------------------------------------------------------
+   QUICK LINK DRAG & DROP — reorder tiles by dragging
+   ---------------------------------------------------------------- */
+
+let _dragQuickLinkId = null;
+
+function attachQuickLinkDragHandlers(list) {
+  list.querySelectorAll('.quick-link').forEach(tile => {
+    tile.addEventListener('dragstart', (e) => {
+      _dragQuickLinkId = tile.dataset.quickLinkId || null;
+      tile.classList.add('quick-link-dragging');
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        // Firefox needs data set to actually start a drag
+        try { e.dataTransfer.setData('text/plain', _dragQuickLinkId || ''); } catch {}
+      }
+    });
+    tile.addEventListener('dragend', () => {
+      tile.classList.remove('quick-link-dragging');
+      list.querySelectorAll('.quick-link-drop-target').forEach(el => el.classList.remove('quick-link-drop-target'));
+      _dragQuickLinkId = null;
+    });
+    tile.addEventListener('dragover', (e) => {
+      if (!_dragQuickLinkId || tile.dataset.quickLinkId === _dragQuickLinkId) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      tile.classList.add('quick-link-drop-target');
+    });
+    tile.addEventListener('dragleave', () => {
+      tile.classList.remove('quick-link-drop-target');
+    });
+    tile.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      tile.classList.remove('quick-link-drop-target');
+      const targetId = tile.dataset.quickLinkId;
+      const sourceId = _dragQuickLinkId;
+      _dragQuickLinkId = null;
+      if (!sourceId || !targetId || sourceId === targetId) return;
+      await reorderQuickLinks(sourceId, targetId);
+    });
+  });
+}
+
+async function reorderQuickLinks(sourceId, targetId) {
+  const links = await getQuickLinks();
+  const fromIdx = links.findIndex(l => l.id === sourceId);
+  const toIdx   = links.findIndex(l => l.id === targetId);
+  if (fromIdx === -1 || toIdx === -1) return;
+  const [moved] = links.splice(fromIdx, 1);
+  links.splice(toIdx, 0, moved);
+  await setQuickLinks(links);
+  await renderQuickLinks();
+}
+
+// Modal state: null = adding, otherwise the id of the link being edited.
+let _editingQuickLinkId = null;
+
 function openQuickLinkModal() {
   const modal = document.getElementById('quickLinkModal');
   if (!modal) return;
+  _editingQuickLinkId = null;
   modal.style.display = 'flex';
+  const titleEl   = document.getElementById('quickLinkModalTitle');
+  const saveBtn   = document.getElementById('quickLinkModalSaveBtn');
   const urlInput  = document.getElementById('quickLinkUrlInput');
   const nameInput = document.getElementById('quickLinkNameInput');
   const errorEl   = document.getElementById('quickLinkModalError');
+  if (titleEl) titleEl.textContent = 'Add a site';
+  if (saveBtn) saveBtn.textContent = 'Add';
   if (urlInput)  urlInput.value = '';
   if (nameInput) nameInput.value = '';
   if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
   if (urlInput) setTimeout(() => urlInput.focus(), 50);
 }
 
+async function openQuickLinkModalForEdit(id) {
+  const modal = document.getElementById('quickLinkModal');
+  if (!modal) return;
+  const links = await getQuickLinks();
+  const link = links.find(l => l.id === id);
+  if (!link) return;
+  _editingQuickLinkId = id;
+  modal.style.display = 'flex';
+  const titleEl   = document.getElementById('quickLinkModalTitle');
+  const saveBtn   = document.getElementById('quickLinkModalSaveBtn');
+  const urlInput  = document.getElementById('quickLinkUrlInput');
+  const nameInput = document.getElementById('quickLinkNameInput');
+  const errorEl   = document.getElementById('quickLinkModalError');
+  if (titleEl) titleEl.textContent = 'Edit site';
+  if (saveBtn) saveBtn.textContent = 'Save';
+  if (urlInput)  urlInput.value = link.url || '';
+  if (nameInput) nameInput.value = (link.name && link.name !== link.host) ? link.name : '';
+  if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+  if (urlInput) setTimeout(() => { urlInput.focus(); urlInput.select(); }, 50);
+}
+
 function closeQuickLinkModal() {
   const modal = document.getElementById('quickLinkModal');
   if (modal) modal.style.display = 'none';
+  _editingQuickLinkId = null;
 }
 
 function showQuickLinkError(msg) {
@@ -1292,17 +1390,30 @@ async function saveQuickLinkFromModal() {
 
   const host = parsed.hostname.replace(/^www\./, '');
   const name = (nameInput && nameInput.value.trim()) || host;
+  const links = await getQuickLinks();
+
+  if (_editingQuickLinkId) {
+    const idx = links.findIndex(l => l.id === _editingQuickLinkId);
+    if (idx === -1) {
+      closeQuickLinkModal();
+      return;
+    }
+    links[idx] = { ...links[idx], url: parsed.toString(), host, name };
+    await setQuickLinks(links);
+    closeQuickLinkModal();
+    await renderQuickLinks();
+    showToast(`Updated ${name}`);
+    return;
+  }
+
   const link = {
     id:   Date.now().toString(),
     url:  parsed.toString(),
     host,
     name,
   };
-
-  const links = await getQuickLinks();
   links.push(link);
   await setQuickLinks(links);
-
   closeQuickLinkModal();
   await renderQuickLinks();
   showToast(`Added ${name}`);
@@ -1602,6 +1713,22 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  // ---- Quick link: edit (from right-click context menu) ----
+  if (action === 'edit-quick-link') {
+    const id = actionEl.dataset.quickLinkId;
+    hideQuickLinkContextMenu();
+    if (id) await openQuickLinkModalForEdit(id);
+    return;
+  }
+
+  // ---- Quick link: delete (from right-click context menu) ----
+  if (action === 'delete-quick-link') {
+    const id = actionEl.dataset.quickLinkId;
+    hideQuickLinkContextMenu();
+    if (id) await removeQuickLinkById(id);
+    return;
+  }
+
   // ---- Workspace: remove tile (intercept before the tile click) ----
   if (action === 'remove-workspace') {
     e.preventDefault();
@@ -1883,6 +2010,53 @@ document.addEventListener('click', async (e) => {
     return;
   }
 });
+
+/* ----------------------------------------------------------------
+   QUICK LINK CONTEXT MENU — right-click a tile to Edit / Delete
+   ---------------------------------------------------------------- */
+
+function showQuickLinkContextMenu(linkId, x, y) {
+  const menu = document.getElementById('quickLinkContextMenu');
+  if (!menu) return;
+  menu.querySelectorAll('[data-action]').forEach(btn => {
+    btn.dataset.quickLinkId = linkId;
+  });
+  // Render off-screen first to measure, then clamp to viewport.
+  menu.style.display = 'block';
+  menu.style.left = '-9999px';
+  menu.style.top  = '-9999px';
+  const rect = menu.getBoundingClientRect();
+  const maxX = window.innerWidth  - rect.width  - 8;
+  const maxY = window.innerHeight - rect.height - 8;
+  menu.style.left = Math.max(8, Math.min(x, maxX)) + 'px';
+  menu.style.top  = Math.max(8, Math.min(y, maxY)) + 'px';
+}
+
+function hideQuickLinkContextMenu() {
+  const menu = document.getElementById('quickLinkContextMenu');
+  if (menu) menu.style.display = 'none';
+}
+
+document.addEventListener('contextmenu', (e) => {
+  const tile = e.target.closest('.quick-link');
+  if (!tile) return;
+  const id = tile.dataset.quickLinkId;
+  if (!id) return;
+  e.preventDefault();
+  showQuickLinkContextMenu(id, e.clientX, e.clientY);
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#quickLinkContextMenu')) return;
+  hideQuickLinkContextMenu();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') hideQuickLinkContextMenu();
+});
+
+window.addEventListener('blur', hideQuickLinkContextMenu);
+window.addEventListener('scroll', hideQuickLinkContextMenu, true);
 
 // ---- Archive toggle — expand/collapse the archive section ----
 document.addEventListener('click', (e) => {
